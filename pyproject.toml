@@ -6,7 +6,7 @@ license = "MPL-2.0"
 readme = "README.md"
 keywords = [ "database", "api", "web", "crypto", "identifiers",]
 requires-python = ">=3.10"
-classifiers = [ "Development Status :: 3 - Alpha", "Intended Audience :: Developers", "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3.10", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13",]
+classifiers = [ "Development Status :: 3 - Alpha", "Intended Audience :: Developers", "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3.10", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Programming Language :: Python :: 3.13", "Programming Language :: Python :: 3.14",]
 dependencies = [ "typing-extensions>=4.12.2", "pydantic>=2.10.6", "base58>=2.1.1", "cryptography>=44.0.1", "pydantic-settings>=2.7.1", "pyjwt>=2.10.1",]
 [[project.authors]]
 name = "Jacob Repp"
@@ -26,8 +26,8 @@ requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
 [project.urls]
-Homepage = "https://github.com/MythicaAI/jungle-ams/libs/python/gcid"
-Repository = "https://github.com/MythicaAI/jungle-ams"
+Homepage = "https://github.com/jrepp/gcid"
+Repository = "https://github.com/jrepp/gcid"
 
 [project.scripts]
 start = "main:start"

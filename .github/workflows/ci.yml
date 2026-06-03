@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  action-lint:
+    name: GitHub Actions lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check workflows
+        uses: rhysd/actionlint@v1
+
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check Python syntax
+        run: uv run --python ${{ matrix.python-version }} python -m compileall -q gcid tests scripts.py
+
+      - name: Lint
+        run: uv run --python ${{ matrix.python-version }} lint
+
+      - name: Test
+        run: uv run --python ${{ matrix.python-version }} test
+
+      - name: Build
+        run: uv build
