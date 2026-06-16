@@ -93,60 +93,55 @@ benchmark also reports base58-only costs; in the same run they were about
 Crypto validation
 =====
 
-GCID stores the version, location partition, and sequence number in one
-encrypted block, then appends a keyed digest. Decoding verifies the digest before
-trusting the decrypted payload.
+GCIDv2 stores a clear binary header in the Base58 payload, then encrypts the
+location partition and sequence number with AES-256-GCM-SIV. The visible type
+prefix and binary header are authenticated as associated data before decoded
+values are trusted.
 
 ```text
 Encode
 
-  type prefix      location      database seq
-  "asset"          00..2a        123
-      |              |            |
-      v              v            v
-  +-----------+--------------+--------------+
-  | version   | location[7]  | seq[8]       |  16-byte plaintext
-  +-----------+--------------+--------------+
+  type prefix      header        location      database seq
+  "asset"          02 01 01 00   00..2a        123
+      |              |             |            |
+      +--------------+-------------+------------+
                          |
                          v
-                  AES-CBC encrypt
+             AEAD associated data: prefix + header
                          |
                          v
-  +---------------- encrypted[16] ----------------+
+                  AES-256-GCM-SIV encrypt
                          |
                          v
-                  BLAKE2b keyed digest
-                         |
-                         v
-  +---------------- encrypted[16] ----------------+-- hmac[4]
+             +-- header[4] --+-- ciphertext --+-- tag[16] --+
                          |
                          v
                     base58 encode
                          |
                          v
-                 "asset_43XfxRWqPm4Tu4iYuGbt6BawSD4h"
+      "asset_CbdrzuzUWxA1FkCVjXXNP92ZT5cpu2DrP23ioGdJ5GPWj2M"
 
 
 Decode / validate
 
-  "asset_43XfxRWqPm4Tu4iYuGbt6BawSD4h"
+  "asset_CbdrzuzUWxA1FkCVjXXNP92ZT5cpu2DrP23ioGdJ5GPWj2M"
                          |
                          v
                  split prefix + base58 body
                          |
                          v
-        recompute keyed digest over encrypted[16]
+                   parse clear header
                          |
                          v
-             compare digest[0:4] with hmac[4]
+             authenticate prefix + header + payload
                          |
               +----------+----------+
               |                     |
               v                     v
-            reject            AES-CBC decrypt
+            reject         AES-256-GCM-SIV decrypt
                                     |
                                     v
-                         version, location, seq
+                              location, seq
 ```
 
 
@@ -158,7 +153,7 @@ be used in a federated system to locate objects globally while
 maintaining private internal number spaces.
 
 
-Crytographic
+Cryptographic
 =====
 
 Identifiers can be reversed to provide metadata such as row number

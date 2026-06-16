@@ -1,19 +1,45 @@
 import random
 
+import base58
 import pytest
 from pydantic import BaseModel, ValidationError
 
+import gcid.gcid as gcid_module
 from gcid.gcid import (
+    Gcid,
     IdError,
     IdType,
     SequenceError,
+    asset_id_to_seq,
+    asset_seq_to_id,
+    event_id_to_seq,
+    event_seq_to_id,
+    file_id_to_seq,
+    file_seq_to_id,
     id_to_db_seq,
     id_to_seq,
     id_type,
+    job_def_id_to_seq,
+    job_def_seq_to_id,
+    job_id_to_seq,
+    job_result_id_to_seq,
+    job_result_seq_to_id,
+    job_seq_to_id,
+    org_id_to_seq,
+    org_seq_to_id,
+    profile_id_to_seq,
+    profile_seq_to_id,
+    reader_id_to_seq,
+    reader_seq_to_id,
     registry,
     seq_to_id,
+    tag_id_to_seq,
+    tag_seq_to_id,
+    topo_id_to_seq,
+    topo_seq_to_id,
     typed_id,
 )
+from gcid.location import location
 
 
 def profile_id():
@@ -31,6 +57,49 @@ def test_round_trip():
 def test_invalid_type():
     _, api_id = profile_id()
     api_id = api_id.replace('prf', 'foo')
+    with pytest.raises(IdError):
+        id_to_seq(api_id, IdType.PROFILE)
+
+
+def test_relabeling_prefix_invalidates_authentication():
+    api_id = seq_to_id(IdType.PROFILE, 123).replace('prf_', 'asset_', 1)
+
+    with pytest.raises(IdError):
+        id_to_seq(api_id, IdType.ASSET)
+
+
+def _mutate_payload_header(api_id: str, offset: int, value: int) -> str:
+    prefix, payload = api_id.split('_', 1)
+    raw = bytearray(base58.b58decode(payload))
+    raw[offset] = value
+    return f'{prefix}_{base58.b58encode(bytes(raw)).decode("ascii")}'
+
+
+@pytest.mark.parametrize(
+    ('offset', 'value'),
+    [
+        (0, 3),
+        (1, 2),
+        (2, 2),
+        (3, 1),
+    ],
+)
+def test_unsupported_header_values_are_rejected_before_decode(offset, value):
+    api_id = _mutate_payload_header(
+        seq_to_id(IdType.PROFILE, 123), offset, value
+    )
+
+    with pytest.raises(IdError):
+        id_to_seq(api_id, IdType.PROFILE)
+
+
+@pytest.mark.parametrize('offset', [4, -1])
+def test_payload_tampering_invalidates_authentication(offset):
+    prefix, payload = seq_to_id(IdType.PROFILE, 123).split('_', 1)
+    raw = bytearray(base58.b58decode(payload))
+    raw[offset] ^= 1
+    api_id = f'{prefix}_{base58.b58encode(bytes(raw)).decode("ascii")}'
+
     with pytest.raises(IdError):
         id_to_seq(api_id, IdType.PROFILE)
 
@@ -85,6 +154,38 @@ def test_id_type_rejects_unknown_legacy_prefix():
         id_type('unknown_QBt6L5GZA4ob6M8wjQ5MWtgochh')
 
 
+def test_id_type_rejects_non_string_input():
+    with pytest.raises(IdError):
+        id_type(1)
+
+
+def test_id_type_rejects_malformed_string():
+    with pytest.raises(IdError):
+        id_type('prf:missing-separator')
+
+
+def test_seq_to_id_rejects_invalid_api_type():
+    with pytest.raises(TypeError):
+        seq_to_id(object(), 1)
+
+
+def test_plain_string_api_type_round_trips():
+    api_id = seq_to_id('asset', 123)
+
+    assert id_to_seq(api_id, 'asset') == 123
+
+
+def test_api_type_can_be_prefix_or_value_object():
+    class PrefixType:
+        prefix = 'asset'
+
+    class ValueType:
+        value = 'asset'
+
+    assert id_to_seq(seq_to_id(PrefixType, 123), PrefixType) == 123
+    assert id_to_seq(seq_to_id(ValueType(), 456), ValueType()) == 456
+
+
 @pytest.mark.parametrize(
     'api_id',
     [
@@ -104,6 +205,11 @@ def test_malformed_ids_raise_id_error(api_id):
 def test_invalid_base58_raises_id_error():
     with pytest.raises(IdError):
         id_to_seq('prf_!!!!', IdType.PROFILE)
+
+
+def test_id_to_seq_rejects_non_string_input():
+    with pytest.raises(IdError):
+        id_to_seq(1, IdType.PROFILE)
 
 
 def test_typed_id_round_trip():
@@ -133,6 +239,18 @@ def test_typed_id_rejects_wrong_prefix():
 
     with pytest.raises(IdError):
         ProfileId(asset_id)
+
+
+def test_base_gcid_cannot_be_constructed_directly():
+    with pytest.raises(TypeError):
+        Gcid('prf_123')
+
+
+def test_typed_id_rejects_non_string_non_int_value():
+    ProfileId = typed_id('profile', 'prf')
+
+    with pytest.raises(IdError):
+        ProfileId(None)
 
 
 def test_registry_creates_id_namespace():
@@ -205,6 +323,10 @@ def test_pydantic_can_accept_raw_seq_when_enabled():
     assert asset.id.seq == 1
 
 
+def test_location_helper_returns_configured_location():
+    assert location() == gcid_module._config.gcid_location
+
+
 def test_id_can_store_location_partition():
     AssetId = typed_id('asset', 'asset', location=42)
 
@@ -229,7 +351,9 @@ def test_location_bound_type_rejects_other_locations():
 def test_location_can_be_overridden_for_generic_conversion():
     api_id = seq_to_id(IdType.ASSET, 123, location=42)
 
-    assert id_to_db_seq(api_id, IdType.ASSET).location == (42).to_bytes(7, 'big')
+    assert id_to_db_seq(api_id, IdType.ASSET).location == (42).to_bytes(
+        7, 'big'
+    )
     assert id_to_seq(api_id, IdType.ASSET, location=42) == 123
 
     with pytest.raises(IdError):
@@ -259,8 +383,29 @@ def test_location_rejects_invalid_type():
         ('not valid', 'asset'),
         ('asset', ''),
         ('asset', 'bad_prefix'),
+        ('asset', 'cafe\u0301'),
     ],
 )
 def test_typed_id_definition_validation(name, prefix):
     with pytest.raises(ValueError):
         typed_id(name, prefix)
+
+
+@pytest.mark.parametrize(
+    ('seq_to_api_id', 'api_id_to_seq'),
+    [
+        (asset_seq_to_id, asset_id_to_seq),
+        (profile_seq_to_id, profile_id_to_seq),
+        (org_seq_to_id, org_id_to_seq),
+        (file_seq_to_id, file_id_to_seq),
+        (event_seq_to_id, event_id_to_seq),
+        (topo_seq_to_id, topo_id_to_seq),
+        (job_def_seq_to_id, job_def_id_to_seq),
+        (job_seq_to_id, job_id_to_seq),
+        (job_result_seq_to_id, job_result_id_to_seq),
+        (reader_seq_to_id, reader_id_to_seq),
+        (tag_seq_to_id, tag_id_to_seq),
+    ],
+)
+def test_legacy_convenience_wrappers_round_trip(seq_to_api_id, api_id_to_seq):
+    assert api_id_to_seq(seq_to_api_id(123)) == 123

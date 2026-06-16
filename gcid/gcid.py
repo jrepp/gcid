@@ -1,7 +1,5 @@
-"""Cryptographic, location aware ID conversions"""
+"""Cryptographic, location aware ID conversions."""
 
-import hashlib
-import hmac
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -9,41 +7,44 @@ from types import SimpleNamespace
 from typing import Any
 
 import base58
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 from pydantic_core import core_schema
 
 from gcid.config import Config
 
 _config = Config()
 
-DIGEST_SIZE = 16
-
 # ID encoding constants
-_HMAC_BYTES = 4
+_GCID_VERSION = 2
+_SUITE_AES_256_GCM_SIV = 1
+_SCHEMA_SEQ64_LOC56 = 1
+_DEFAULT_KEY_ID = 0
+
+_HEADER_BYTES = 4
+_TAG_BYTES = 16
+_LOCATION_BYTES = 7
 _SEQ_BYTES = 8
-_PREFIX_BYTES = 8
-_ENCRYPTED_BYTES = _PREFIX_BYTES + _SEQ_BYTES
+_PLAINTEXT_BYTES = _LOCATION_BYTES + _SEQ_BYTES
+_PAYLOAD_BYTES = _HEADER_BYTES + _PLAINTEXT_BYTES + _TAG_BYTES
 
 _ENC_KEY: bytes = _config.gcid_enc_key.encode('utf-8')
-_HMAC_KEY: bytes = _config.gcid_hmac_key.encode('utf-8')
-_PERSON: bytes = b'id'
-_HMAC_BASE = hashlib.blake2b(
-    digest_size=DIGEST_SIZE, key=_HMAC_KEY, person=_PERSON
+if len(_ENC_KEY) != 32:
+    raise ValueError('gcid_enc_key must encode to exactly 32 bytes')
+
+_NONCE = b'\00' * 12
+_AAD_DOMAIN = b'GCIDv2'
+_HEADER = bytes(
+    (
+        _GCID_VERSION,
+        _SUITE_AES_256_GCM_SIV,
+        _SCHEMA_SEQ64_LOC56,
+        _DEFAULT_KEY_ID,
+    )
 )
 
-# Generate a 16-byte Initialization Vector (IV)
-_IV = b'\00' * 16
-
-# ID metadata
-_VERSION = b'\01'
-_LOCATION_PARTITION = b'\00\00\00\00\00\00\00'
-_API_ID_PREFIX = _VERSION + _LOCATION_PARTITION
-
-# Create a Cipher object using AES algorithm in CBC mode
-cipher = Cipher(
-    algorithms.AES(_ENC_KEY), modes.CBC(_IV), backend=default_backend()
-)
+_LOCATION_PARTITION = b'\00' * _LOCATION_BYTES
+_aead = AESGCMSIV(_ENC_KEY)
 
 log = logging.getLogger(__name__)
 
@@ -133,7 +134,7 @@ def _location_bytes(location: bytes | int | None) -> bytes:
         return location.to_bytes(7, 'big')
 
     if isinstance(location, bytes):
-        if len(location) != 7:
+        if len(location) != _LOCATION_BYTES:
             raise ValueError('location must be exactly 7 bytes')
         return location
 
@@ -145,19 +146,29 @@ def _type_location(api_type: Any) -> bytes:
 
 
 def _api_id_prefix(location: bytes | int | None = None) -> bytes:
-    return _VERSION + _location_bytes(location)
+    return _HEADER + _location_bytes(location)
 
 
-def _digest_hmac(encrypted: bytes) -> bytes:
-    h = _HMAC_BASE.copy()
-    h.update(encrypted)
-    return h.digest()[0:_HMAC_BYTES]
+def _validate_wire_prefix(prefix: str) -> None:
+    if not prefix or '_' in prefix:
+        raise ValueError(
+            f'id prefix must be non-empty and not contain _: {prefix!r}'
+        )
+
+    try:
+        prefix.encode('ascii')
+    except UnicodeEncodeError as exc:
+        raise ValueError(f'id prefix must be ASCII: {prefix!r}') from exc
+
+
+def _aad(prefix: str, header: bytes) -> bytes:
+    return b'\00'.join((_AAD_DOMAIN, prefix.encode('ascii'), header))
 
 
 def seq_to_id(
     api_type: Any, seq: int | None, location: bytes | int | None = None
 ) -> str:
-    """Given a 64bit integer, return an encrypted version with a fixed HMAC"""
+    """Given a 64-bit integer, return an encrypted GCIDv2 string."""
     if seq is None:
         raise SequenceError(0, 'sequence is none')
 
@@ -167,18 +178,22 @@ def seq_to_id(
     if seq < 0 or seq >= 2**64:
         raise SequenceError(seq, 'sequence must fit in 64 bits')
 
-    # encrypt first 16 bytes (note this must be done in 128bit blocks or else padded)
-    seq_bytes = seq.to_bytes(8, 'big')
-    e = cipher.encryptor()
-    id_location = _type_location(api_type) if location is None else location
-    encrypted = e.update(_api_id_prefix(id_location) + seq_bytes)
-    if len(encrypted) != _ENCRYPTED_BYTES:
-        raise SequenceError(seq, f'invalid encrypted length {len(encrypted)}')
+    type_prefix = _type_prefix(api_type)
+    _validate_wire_prefix(type_prefix)
 
-    combined = encrypted + _digest_hmac(encrypted)
+    seq_bytes = seq.to_bytes(8, 'big')
+    id_location = (
+        _type_location(api_type)
+        if location is None
+        else _location_bytes(location)
+    )
+    plaintext = id_location + seq_bytes
+    ciphertext = _aead.encrypt(_NONCE, plaintext, _aad(type_prefix, _HEADER))
+
+    combined = _HEADER + ciphertext
     encoded = base58.b58encode(combined)
 
-    return ''.join((_type_prefix(api_type), '_', encoded.decode('utf-8')))
+    return ''.join((type_prefix, '_', encoded.decode('utf-8')))
 
 
 def id_type(api_id: str) -> IdType:
@@ -209,22 +224,39 @@ def _decode_id(
     except ValueError as exc:
         raise IdError(api_id, 'invalid base58 encoding') from exc
 
-    # Extract the encrypted serial number and HMAC
-    encrypted: bytes = combined[0:_ENCRYPTED_BYTES]
-    serial_hmac = combined[_ENCRYPTED_BYTES:]
-    if len(serial_hmac) != _HMAC_BYTES:
-        raise IdError(api_id, 'HMAC byte count mismatch')
+    if len(combined) != _PAYLOAD_BYTES:
+        raise IdError(api_id, 'payload byte count mismatch')
 
-    if not hmac.compare_digest(serial_hmac, _digest_hmac(encrypted)):
-        raise IdError(
-            api_id, 'Invalid HMAC - data may have been tampered with'
+    header = combined[:_HEADER_BYTES]
+    ciphertext = combined[_HEADER_BYTES:]
+
+    version, suite, schema, key_id = header
+    if version != _GCID_VERSION:
+        raise IdError(api_id, f'ID has invalid version: {version}')
+
+    if suite != _SUITE_AES_256_GCM_SIV:
+        raise IdError(api_id, f'ID has unsupported crypto suite: {suite}')
+
+    if schema != _SCHEMA_SEQ64_LOC56:
+        raise IdError(api_id, f'ID has unsupported payload schema: {schema}')
+
+    if key_id != _DEFAULT_KEY_ID:
+        raise IdError(api_id, f'ID has unsupported key id: {key_id}')
+
+    try:
+        decrypted_data = _aead.decrypt(
+            _NONCE, ciphertext, _aad(type_str, header)
         )
+    except InvalidTag as exc:
+        raise IdError(
+            api_id, 'invalid authentication tag or associated data'
+        ) from exc
 
-    # Decrypt the serial number
-    d = cipher.decryptor()
-    decrypted_data = d.update(encrypted)
-    prefix = decrypted_data[0:_PREFIX_BYTES]
-    seq = decrypted_data[_PREFIX_BYTES:]
+    if len(decrypted_data) != _PLAINTEXT_BYTES:
+        raise IdError(api_id, f'Invalid plaintext bytes {len(decrypted_data)}')
+
+    id_location = decrypted_data[:_LOCATION_BYTES]
+    seq = decrypted_data[_LOCATION_BYTES:]
     if len(seq) != _SEQ_BYTES:
         raise IdError(api_id, f'Invalid sequence bytes {len(seq)}')
 
@@ -233,14 +265,12 @@ def _decode_id(
     if expected_location is None and type_location != _LOCATION_PARTITION:
         expected_location = type_location
 
-    expected_prefix = _api_id_prefix(expected_location)
-    if expected_location is not None and prefix != expected_prefix:
-        raise IdError(api_id, f'ID has invalid prefix: {prefix}')
+    if expected_location is not None:
+        expected_location_bytes = _location_bytes(expected_location)
+        if id_location != expected_location_bytes:
+            raise IdError(api_id, f'ID has invalid location: {id_location}')
 
-    if prefix[0:1] != _VERSION:
-        raise IdError(api_id, f'ID has invalid version: {prefix[0:1]}')
-
-    return int.from_bytes(seq, 'big'), prefix, prefix[1:_PREFIX_BYTES]
+    return int.from_bytes(seq, 'big'), _api_id_prefix(id_location), id_location
 
 
 def id_to_db_seq(
@@ -360,10 +390,7 @@ def typed_id(
     if not name.isidentifier():
         raise ValueError(f'id name must be a valid identifier: {name!r}')
 
-    if not prefix or '_' in prefix:
-        raise ValueError(
-            f'id prefix must be non-empty and not contain _: {prefix!r}'
-        )
+    _validate_wire_prefix(prefix)
 
     class_name = ''.join(part.capitalize() for part in name.split('_')) + 'Id'
     return type(
@@ -373,7 +400,9 @@ def typed_id(
             '__module__': __name__,
             'name': name,
             'prefix': prefix,
-            'location': _location_bytes(location) if location is not None else None,
+            'location': _location_bytes(location)
+            if location is not None
+            else None,
             'accept_seq_in_pydantic': accept_seq_in_pydantic,
         },
     )
