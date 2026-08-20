@@ -13,6 +13,7 @@ public final class GcidId {
     }
 
     public static GcidId parse(String value) throws GcidException {
+        Objects.requireNonNull(value, "value");
         var parts = GcidWire.split(value);
         return new GcidId(value, parts.prefix().length());
     }
@@ -41,6 +42,6 @@ public final class GcidId {
 
     @Override
     public int hashCode() {
-        return Objects.hash(value);
+        return value.hashCode();
     }
 }

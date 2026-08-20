@@ -10,10 +10,12 @@ callers can branch on error class without parsing message text.
 
 ```java
 import com.github.jrepp.gcid.GcidCodec;
+import java.nio.charset.StandardCharsets;
 
 final class Example {
     public static void main(String[] args) throws Exception {
-        var codec = GcidCodec.create("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".getBytes());
+        var key = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".getBytes(StandardCharsets.US_ASCII);
+        var codec = GcidCodec.fromKey(key);
         var id = codec.encode("prf", 123);
         var decoded = codec.decode("prf", id);
 
@@ -21,6 +23,15 @@ final class Example {
         System.out.println(Long.toUnsignedString(decoded.sequence()));
     }
 }
+```
+
+Use the location overload when the encrypted payload should carry a 56-bit
+partition:
+
+```java
+var id = codec.encode("asset", 123, 42);
+var decoded = codec.decode("asset", id);
+System.out.println(decoded.location().toLong());
 ```
 
 Run a complete command-line example from this directory:

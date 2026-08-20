@@ -1,6 +1,7 @@
 package com.github.jrepp.gcid;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 /** The encrypted 56-bit GCID location partition. */
 public final class LocationPartition {
@@ -14,6 +15,7 @@ public final class LocationPartition {
     }
 
     public static LocationPartition fromBytes(byte[] bytes) {
+        Objects.requireNonNull(bytes, "bytes");
         if (bytes.length != BYTE_LENGTH) {
             throw new IllegalArgumentException("location must be exactly 7 bytes");
         }
@@ -52,6 +54,10 @@ public final class LocationPartition {
         return value;
     }
 
+    public long toLong() {
+        return asLong();
+    }
+
     byte[] rawBytes() {
         return bytes;
     }
@@ -64,5 +70,15 @@ public final class LocationPartition {
     @Override
     public int hashCode() {
         return Arrays.hashCode(bytes);
+    }
+
+    @Override
+    public String toString() {
+        var out = new StringBuilder(BYTE_LENGTH * 2);
+        for (byte b : bytes) {
+            out.append(Character.forDigit((b >>> 4) & 0x0f, 16));
+            out.append(Character.forDigit(b & 0x0f, 16));
+        }
+        return out.toString();
     }
 }

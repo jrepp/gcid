@@ -14,7 +14,7 @@ public final class GcidCommandLineExample {
         var location = args.length > 2 ? Long.parseLong(args[2]) : 42L;
 
         var codec = GcidCodec.create(DEV_KEY);
-        var id = codec.encodeWithLocation(prefix, sequence, location);
+        var id = codec.encode(prefix, sequence, location);
         var decoded = codec.decode(prefix, id);
 
         System.out.println("id=" + id);

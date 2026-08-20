@@ -1,5 +1,7 @@
 package com.github.jrepp.gcid;
 
+import java.math.BigInteger;
+import java.util.Objects;
 import com.github.jrepp.gcid.GcidException.Code;
 
 /** Multi-key GCIDv2 decoder with one default encoder key. */
@@ -8,8 +10,13 @@ public final class GcidKeyring {
     private int defaultKeyId;
     private boolean hasDefault;
 
+    public static GcidKeyring of(int keyId, byte[] key) throws GcidException {
+        return new GcidKeyring().addKey(keyId, key);
+    }
+
     public GcidKeyring addKey(int keyId, byte[] key) throws GcidException {
-        var normalized = keyId & 0xff;
+        Objects.requireNonNull(key, "key");
+        var normalized = GcidCodec.validateKeyId(keyId);
         codecs[normalized] = GcidCodec.create(key, normalized);
         if (!hasDefault) {
             defaultKeyId = normalized;
@@ -18,11 +25,51 @@ public final class GcidKeyring {
         return this;
     }
 
+    public GcidKeyring defaultKeyId(int keyId) throws GcidException {
+        var normalized = GcidCodec.validateKeyId(keyId);
+        if (codecs[normalized] == null) {
+            throw new GcidException(Code.UNKNOWN_KEY_ID, "unknown key id: " + normalized);
+        }
+        defaultKeyId = normalized;
+        hasDefault = true;
+        return this;
+    }
+
+    public boolean containsKey(int keyId) throws GcidException {
+        return codecs[GcidCodec.validateKeyId(keyId)] != null;
+    }
+
+    public int defaultKeyId() throws GcidException {
+        defaultCodec();
+        return defaultKeyId;
+    }
+
     public GcidId encode(String prefix, long sequence) throws GcidException {
         return defaultCodec().encode(prefix, sequence);
     }
 
+    public GcidId encode(String prefix, BigInteger sequence) throws GcidException {
+        return defaultCodec().encode(prefix, sequence);
+    }
+
+    public GcidId encode(String prefix, long sequence, long location) throws GcidException {
+        return defaultCodec().encode(prefix, sequence, location);
+    }
+
+    public GcidId encode(String prefix, BigInteger sequence, long location) throws GcidException {
+        return defaultCodec().encode(prefix, sequence, location);
+    }
+
+    public GcidId encode(String prefix, long sequence, LocationPartition location) throws GcidException {
+        return defaultCodec().encode(prefix, sequence, location);
+    }
+
+    public GcidId encode(String prefix, BigInteger sequence, LocationPartition location) throws GcidException {
+        return defaultCodec().encode(prefix, sequence, location);
+    }
+
     public DecodedGcid decode(String expectedPrefix, String value) throws GcidException {
+        Objects.requireNonNull(value, "value");
         GcidWire.validatePrefix(expectedPrefix);
         var parts = GcidWire.decodeParts(value);
         if (!parts.prefix().equals(expectedPrefix)) {
@@ -34,14 +81,17 @@ public final class GcidKeyring {
     }
 
     public DecodedGcid decode(String expectedPrefix, GcidId id) throws GcidException {
+        Objects.requireNonNull(id, "id");
         return decode(expectedPrefix, id.toString());
     }
 
     public DecodedGcid decodeAny(GcidId id) throws GcidException {
+        Objects.requireNonNull(id, "id");
         return decodeAny(id.toString());
     }
 
     public DecodedGcid decodeAny(String value) throws GcidException {
+        Objects.requireNonNull(value, "value");
         var parts = GcidWire.decodeParts(value);
         return decodePayload(parts.prefix(), parts.payload());
     }

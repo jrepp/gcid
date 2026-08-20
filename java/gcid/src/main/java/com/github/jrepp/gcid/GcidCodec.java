@@ -6,6 +6,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.util.Arrays;
+import java.util.Objects;
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
 import com.github.jrepp.gcid.GcidException.Code;
@@ -19,6 +20,7 @@ public final class GcidCodec {
     public static final int HEADER_LENGTH = 4;
     public static final int LOCATION_LENGTH = 7;
     public static final int SEQUENCE_LENGTH = 8;
+    public static final int KEY_LENGTH = 32;
     public static final int PLAINTEXT_LENGTH = LOCATION_LENGTH + SEQUENCE_LENGTH;
     public static final int TAG_LENGTH = 16;
     public static final int PAYLOAD_LENGTH = HEADER_LENGTH + PLAINTEXT_LENGTH + TAG_LENGTH;
@@ -33,7 +35,7 @@ public final class GcidCodec {
     private final ThreadLocal<Cipher> cipher;
 
     private GcidCodec(int keyId, byte[] authKey, byte[] encKey) {
-        this.keyId = keyId & 0xff;
+        this.keyId = keyId;
         this.authKey = authKey;
         this.encKey = new SecretKeySpec(encKey, "AES");
         this.cipher = ThreadLocal.withInitial(() -> {
@@ -51,13 +53,24 @@ public final class GcidCodec {
         return create(key, DEFAULT_KEY_ID);
     }
 
+    public static GcidCodec fromKey(byte[] key) throws GcidException {
+        return create(key);
+    }
+
+    public static GcidCodec fromKey(byte[] key, int keyId) throws GcidException {
+        return create(key, keyId);
+    }
+
     public static GcidCodec create(byte[] key, int keyId) throws GcidException {
-        if (key.length != 32) {
-            throw new GcidException(Code.INVALID_KEY_LENGTH, "key must be exactly 32 bytes, got " + key.length);
+        Objects.requireNonNull(key, "key");
+        var normalizedKeyId = validateKeyId(keyId);
+        if (key.length != KEY_LENGTH) {
+            throw new GcidException(
+                    Code.INVALID_KEY_LENGTH, "key must be exactly " + KEY_LENGTH + " bytes, got " + key.length);
         }
         try {
             var keys = deriveKeys(key);
-            return new GcidCodec(keyId, keys.authKey(), keys.encKey());
+            return new GcidCodec(normalizedKeyId, keys.authKey(), keys.encKey());
         } catch (GeneralSecurityException exc) {
             throw new GcidException(Code.CRYPTO, "failed to initialize AES", exc);
         }
@@ -81,21 +94,37 @@ public final class GcidCodec {
     }
 
     public GcidId encode(String prefix, BigInteger sequence) throws GcidException {
+        Objects.requireNonNull(sequence, "sequence");
         if (sequence.signum() < 0 || sequence.compareTo(U64_LIMIT) >= 0) {
             throw new GcidException(Code.INVALID_SEQUENCE, "sequence must fit in unsigned 64 bits: " + sequence);
         }
         return encode(prefix, sequence.longValue());
     }
 
-    public GcidId encodeWithLocation(String prefix, long sequence, long location) throws GcidException {
-        try {
-            return encode(prefix, sequence, LocationPartition.fromLong(location));
-        } catch (IllegalArgumentException exc) {
-            throw new GcidException(Code.INVALID_LOCATION, exc.getMessage(), exc);
+    public GcidId encode(String prefix, BigInteger sequence, LocationPartition location) throws GcidException {
+        Objects.requireNonNull(sequence, "sequence");
+        if (sequence.signum() < 0 || sequence.compareTo(U64_LIMIT) >= 0) {
+            throw new GcidException(Code.INVALID_SEQUENCE, "sequence must fit in unsigned 64 bits: " + sequence);
         }
+        return encode(prefix, sequence.longValue(), location);
+    }
+
+    public GcidId encode(String prefix, BigInteger sequence, long location) throws GcidException {
+        return encode(prefix, sequence, locationFromLong(location));
+    }
+
+    public GcidId encode(String prefix, long sequence, long location) throws GcidException {
+        return encode(prefix, sequence, locationFromLong(location));
+    }
+
+    /** Prefer {@link #encode(String, long, long)} for new call sites. */
+    @Deprecated
+    public GcidId encodeWithLocation(String prefix, long sequence, long location) throws GcidException {
+        return encode(prefix, sequence, location);
     }
 
     public GcidId encode(String prefix, long sequence, LocationPartition location) throws GcidException {
+        Objects.requireNonNull(location, "location");
         GcidWire.validatePrefix(prefix);
         var header = header();
         var plaintext = new byte[PLAINTEXT_LENGTH];
@@ -114,10 +143,12 @@ public final class GcidCodec {
     }
 
     public DecodedGcid decode(String expectedPrefix, GcidId id) throws GcidException {
+        Objects.requireNonNull(id, "id");
         return decode(expectedPrefix, id.toString());
     }
 
     public DecodedGcid decode(String expectedPrefix, String value) throws GcidException {
+        Objects.requireNonNull(value, "value");
         GcidWire.validatePrefix(expectedPrefix);
         var parts = GcidWire.decodeParts(value);
         if (!parts.prefix().equals(expectedPrefix)) {
@@ -129,10 +160,12 @@ public final class GcidCodec {
     }
 
     public DecodedGcid decodeAny(GcidId id) throws GcidException {
+        Objects.requireNonNull(id, "id");
         return decodeAny(id.toString());
     }
 
     public DecodedGcid decodeAny(String value) throws GcidException {
+        Objects.requireNonNull(value, "value");
         var parts = GcidWire.decodeParts(value);
         return decodePayload(parts.prefix(), parts.payload());
     }
@@ -263,6 +296,21 @@ public final class GcidCodec {
             }
         }
         return new DerivedKeys(authKey, encKey);
+    }
+
+    static int validateKeyId(int keyId) throws GcidException {
+        if (keyId < 0 || keyId > 255) {
+            throw new GcidException(Code.INVALID_KEY_ID, "key id must fit in one byte: " + keyId);
+        }
+        return keyId;
+    }
+
+    private static LocationPartition locationFromLong(long location) throws GcidException {
+        try {
+            return LocationPartition.fromLong(location);
+        } catch (IllegalArgumentException exc) {
+            throw new GcidException(Code.INVALID_LOCATION, exc.getMessage(), exc);
+        }
     }
 
     private static byte[] aesBlock(SecretKeySpec key, byte[] block) throws GeneralSecurityException {

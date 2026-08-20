@@ -28,6 +28,7 @@ public final class GcidException extends Exception {
         INVALID_PAYLOAD_LENGTH,
         INVALID_SEQUENCE,
         INVALID_LOCATION,
+        INVALID_KEY_ID,
         UNEXPECTED_PREFIX,
         UNSUPPORTED_VERSION,
         UNSUPPORTED_SUITE,

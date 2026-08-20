@@ -1,12 +1,13 @@
 package com.github.jrepp.gcid;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import com.github.jrepp.gcid.GcidException.Code;
 
 public final class GcidTest {
-    private static final byte[] DEV_KEY = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".getBytes();
-    private static final byte[] ALT_KEY = "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY".getBytes();
+    private static final byte[] DEV_KEY = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] ALT_KEY = "YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY".getBytes(StandardCharsets.US_ASCII);
 
     public static void main(String[] args) throws Exception {
         specVectors();
@@ -40,7 +41,7 @@ public final class GcidTest {
                         "prf_Cbdrze8v48sf8q2jPwrCf3TMB4Gs3YiHcnki91GDYsBwmxp")
         };
         for (var vector : vectors) {
-            var id = codec.encodeWithLocation(vector.prefix, vector.sequence, vector.location);
+            var id = codec.encode(vector.prefix, vector.sequence, vector.location);
             assertEquals(vector.id, id.toString(), "encoded vector");
             var decoded = codec.decode(vector.prefix, id);
             assertEquals(vector.sequence, decoded.sequence(), "decoded sequence");
@@ -89,8 +90,10 @@ public final class GcidTest {
         for (var prefix : new String[] {"", "bad_prefix", "bad prefix", "café"}) {
             expectFailure(() -> codec.encode(prefix, 1), Code.INVALID_PREFIX);
         }
-        expectFailure(() -> codec.encodeWithLocation("asset", 1, 1L << 56), Code.INVALID_LOCATION);
+        expectFailure(() -> codec.encode("asset", 1, 1L << 56), Code.INVALID_LOCATION);
         expectFailure(() -> GcidCodec.create(Arrays.copyOf(DEV_KEY, 31)), Code.INVALID_KEY_LENGTH);
+        expectFailure(() -> GcidCodec.create(DEV_KEY, -1), Code.INVALID_KEY_ID);
+        expectFailure(() -> GcidCodec.create(DEV_KEY, 256), Code.INVALID_KEY_ID);
         expectFailure(() -> GcidId.parse("prf_payload_extra"), Code.INVALID_FORMAT);
         expectFailure(() -> GcidId.parse("prf_"), Code.INVALID_FORMAT);
         expectFailure(() -> codec.decodeAny("prf_0"), Code.INVALID_BASE58);
@@ -115,12 +118,21 @@ public final class GcidTest {
         assertEquals(7, codec.keyId(), "codec key id");
         var id = codec.encode("prf", 99);
         var ring = new GcidKeyring().addKey(1, ALT_KEY).addKey(7, DEV_KEY);
+        assertTrue(ring.containsKey(7), "keyring contains key");
+        assertEquals(1, ring.defaultKeyId(), "first key is default");
+        ring.defaultKeyId(7);
+        assertEquals(7, ring.defaultKeyId(), "explicit default key");
+        assertEquals(codec.encode("prf", 99).toString(), ring.encode("prf", 99).toString(), "keyring encode");
+        assertEquals(codec.encode("asset", BigInteger.valueOf(123), 42).toString(),
+                ring.encode("asset", BigInteger.valueOf(123), 42).toString(), "keyring location encode");
         var decoded = ring.decodeAny(id);
         assertEquals(7, decoded.keyId(), "keyring key id");
         assertEquals(99L, decoded.sequence(), "keyring sequence");
         assertEquals(99L, ring.decode("prf", id).sequence(), "keyring decode");
         expectFailure(() -> new GcidKeyring().addKey(1, Arrays.copyOf(DEV_KEY, 31)), Code.INVALID_KEY_LENGTH);
+        expectFailure(() -> new GcidKeyring().addKey(256, DEV_KEY), Code.INVALID_KEY_ID);
         expectFailure(() -> new GcidKeyring().encode("prf", 1), Code.EMPTY_KEYRING);
+        expectFailure(() -> new GcidKeyring().addKey(1, ALT_KEY).defaultKeyId(7), Code.UNKNOWN_KEY_ID);
         expectFailure(() -> new GcidKeyring().addKey(1, ALT_KEY).decodeAny(id.toString()), Code.UNKNOWN_KEY_ID);
     }
 
