@@ -9,7 +9,7 @@ Quick examples
 
 ```python
 from gcid import registry, typed_id
-from gcid.gcid import id_to_db_seq
+from gcid.gcid import IdType, id_to_db_seq, id_to_seq, seq_to_id
 
 ids = registry(profile="prf", asset="asset")
 
@@ -17,13 +17,13 @@ profile_id = ids.profile(123)
 asset_id = ids.asset.from_seq(456)
 
 str(profile_id)
-# "prf_QBt6L5GZA4ob6M8wjQ5MWtgochh"
+# "prf_Cbds1yPUh73MNg2g2H3cdADCRuF7USjteUEdqeEAQPC7whQ"
 
 profile_id.seq
 # 123
 
 str(asset_id)
-# "asset_GLCN4aqgfwoCQT4hcKShEcgFyXw"
+# "asset_Cbds3PQ1ZC2vzDFLB7qWod4hHnAuFwt4uqFH6NbKL1ZBCvT"
 
 ids.asset.to_seq(asset_id)
 # 456
@@ -37,7 +37,7 @@ RegionalAssetId = typed_id("asset", "asset", location=42)
 
 regional_asset_id = RegionalAssetId(123)
 str(regional_asset_id)
-# "asset_43XfxRWqPm4Tu4iYuGbt6BawSD4h"
+# "asset_CbdrzuzUWxA1FkCVjXXNP92ZT5cpu2DrP23ioGdJ5GPWj2M"
 
 regional_asset_id.seq
 # 123
@@ -70,25 +70,144 @@ To include cProfile output for the conversion workload:
 GCID_BENCH_N=10000 GCID_BENCH_PROFILE=1 uv run bench
 ```
 
-The benchmark reports raw encode/decode costs, typed ID construction and `.seq`
-access, pydantic model validation costs, and base58-only encode/decode costs in
-microseconds per operation.
+The benchmark reports v2 encode/decode costs, v1 compatibility encode/decode
+costs, typed ID construction and `.seq` access, pydantic model validation costs,
+and base58-only encode/decode costs in microseconds per operation.
 
-Recent local profile-guided optimization results, measured with
-`GCID_BENCH_N=50000`:
+The Rust and Go packages have matching GCIDv2 benchmarks:
 
-| Operation | Before | After |
+```sh
+cd rust/gcid
+GCID_BENCH_N=100000 cargo run --release --example bench
+
+cd go/gcid
+go test -bench=. -benchmem ./...
+```
+
+Recent local GCIDv2 encode/decode comparison, measured with
+`GCID_BENCH_N=100000` on Apple Silicon:
+
+| Implementation | Encode | Decode |
 | --- | ---: | ---: |
-| `seq_to_id` | 5.744 us/op | 5.667 us/op |
-| `id_to_seq` | 7.062 us/op | 6.316 us/op |
-| typed ID from seq | 13.668 us/op | 6.713 us/op |
-| typed ID `.seq` | 7.383 us/op | 0.021 us/op |
-| pydantic validation | 23.302 us/op | 16.281 us/op string / 7.625 us/op typed |
+| Python | 22.041 us/op | 19.651 us/op |
+| Rust release | 4.839 us/op | 5.945 us/op |
+| Go 1.26.4 | 10.301 us/op | 13.015 us/op |
+| Java 25.0.3 | 10.672 us/op | 10.497 us/op |
 
-The post-optimization profile shows the remaining dominant costs are base58
-encoding/decoding, pydantic validation, and cryptography context creation. The
-benchmark also reports base58-only costs; in the same run they were about
-2.998 us/op for encode and 3.419 us/op for decode.
+On that run, Rust encode was about 4.56x faster than Python and Rust decode was
+about 3.31x faster. Go encode was about 2.14x faster than Python and Go decode
+was about 1.51x faster. Java encode was about 2.07x faster than Python and Java
+decode was about 1.87x faster. Treat these as local ballpark numbers, not
+portable guarantees; CPU, JVM warmup, OpenSSL/backend availability, Go/Python
+version, and Base58 costs all matter.
+
+V1 migration compatibility
+=====
+
+GCIDv2 is the default for all existing constructors:
+
+```python
+seq_to_id(IdType.PROFILE, 123)
+# "prf_Cbds1yPUh73MNg2g2H3cdADCRuF7USjteUEdqeEAQPC7whQ"
+```
+
+Existing GCIDv1 strings still decode with the same APIs, so services can accept
+stored or inbound v1 IDs while emitting v2 for new IDs:
+
+```python
+id_to_seq("prf_QBt6L5GZA4ob6M8wjQ5MWtgochh", IdType.PROFILE)
+# 123
+```
+
+If an older client still requires v1 output during a migration window, opt in
+explicitly:
+
+```python
+seq_to_id(IdType.PROFILE, 123, format_version=1)
+# "prf_QBt6L5GZA4ob6M8wjQ5MWtgochh"
+
+LegacyProfileId = typed_id("profile", "prf", format_version=1)
+str(LegacyProfileId(123))
+# "prf_QBt6L5GZA4ob6M8wjQ5MWtgochh"
+```
+
+Rust implementation
+=====
+
+An idiomatic Rust GCIDv2 crate lives in `rust/gcid`. It exposes a `GcidCodec`
+for encoding and decoding v2 IDs with the same test vectors as the Python
+reference implementation.
+
+```rust
+use gcid::GcidCodec;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let codec = GcidCodec::new(*b"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
+    let id = codec.encode("prf", 123)?;
+    let decoded = codec.decode("prf", &id)?;
+    assert_eq!(decoded.sequence, 123);
+
+    Ok(())
+}
+```
+
+Go implementation
+=====
+
+An idiomatic, zero-dependency Go GCIDv2 package lives in `go/gcid`. It exposes
+a `Codec`, typed `ID`, `LocationPartition`, and keyring support.
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+
+    "github.com/jrepp/gcid/go/gcid"
+)
+
+func main() {
+    codec, err := gcid.NewCodec([]byte("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"))
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    id, err := codec.Encode("prf", 123)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    decoded, err := codec.DecodeID("prf", id)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Println(id.String(), decoded.Sequence)
+}
+```
+
+Java implementation
+=====
+
+An idiomatic, dependency-free Java GCIDv2 package lives in `java/gcid`. It uses
+the JDK AES primitive and implements the AES-256-GCM-SIV construction required
+by GCIDv2.
+
+```java
+import com.github.jrepp.gcid.GcidCodec;
+
+final class Example {
+    public static void main(String[] args) throws Exception {
+        var codec = GcidCodec.create("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".getBytes());
+        var id = codec.encode("prf", 123);
+        var decoded = codec.decode("prf", id);
+
+        System.out.println(id);
+        System.out.println(Long.toUnsignedString(decoded.sequence()));
+    }
+}
+```
 
 Crypto validation
 =====
