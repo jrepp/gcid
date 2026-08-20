@@ -1,5 +1,7 @@
 """Cryptographic, location aware ID conversions."""
 
+import hashlib
+import hmac
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -8,6 +10,7 @@ from typing import Any
 
 import base58
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 from pydantic_core import core_schema
 
@@ -17,18 +20,23 @@ _config = Config()
 
 # ID encoding constants
 _GCID_VERSION = 2
+_LEGACY_GCID_VERSION = 1
 _SUITE_AES_256_GCM_SIV = 1
 _SCHEMA_SEQ64_LOC56 = 1
 _DEFAULT_KEY_ID = 0
 
 _HEADER_BYTES = 4
 _TAG_BYTES = 16
+_LEGACY_TAG_BYTES = 4
 _LOCATION_BYTES = 7
 _SEQ_BYTES = 8
+_LEGACY_PREFIX_BYTES = 1 + _LOCATION_BYTES
 _PLAINTEXT_BYTES = _LOCATION_BYTES + _SEQ_BYTES
 _PAYLOAD_BYTES = _HEADER_BYTES + _PLAINTEXT_BYTES + _TAG_BYTES
+_LEGACY_PAYLOAD_BYTES = _LEGACY_PREFIX_BYTES + _SEQ_BYTES + _LEGACY_TAG_BYTES
 
 _ENC_KEY: bytes = _config.gcid_enc_key.encode('utf-8')
+_HMAC_KEY: bytes = _config.gcid_hmac_key.encode('utf-8')
 if len(_ENC_KEY) != 32:
     raise ValueError('gcid_enc_key must encode to exactly 32 bytes')
 
@@ -45,6 +53,10 @@ _HEADER = bytes(
 
 _LOCATION_PARTITION = b'\00' * _LOCATION_BYTES
 _aead = AESGCMSIV(_ENC_KEY)
+_legacy_cipher = Cipher(algorithms.AES(_ENC_KEY), modes.CBC(b'\00' * 16))
+_legacy_hmac_base = hashlib.blake2b(
+    digest_size=16, key=_HMAC_KEY, person=b'id'
+)
 
 log = logging.getLogger(__name__)
 
@@ -149,6 +161,10 @@ def _api_id_prefix(location: bytes | int | None = None) -> bytes:
     return _HEADER + _location_bytes(location)
 
 
+def _legacy_api_id_prefix(location: bytes | int | None = None) -> bytes:
+    return bytes((_LEGACY_GCID_VERSION,)) + _location_bytes(location)
+
+
 def _validate_wire_prefix(prefix: str) -> None:
     if not prefix or '_' in prefix:
         raise ValueError(
@@ -165,10 +181,48 @@ def _aad(prefix: str, header: bytes) -> bytes:
     return b'\00'.join((_AAD_DOMAIN, prefix.encode('ascii'), header))
 
 
+def _legacy_digest(encrypted: bytes) -> bytes:
+    digest = _legacy_hmac_base.copy()
+    digest.update(encrypted)
+    return digest.digest()[:_LEGACY_TAG_BYTES]
+
+
+def _format_version(format_version: int | str) -> int:
+    if isinstance(format_version, bool):
+        raise ValueError(
+            f'unsupported GCID format version: {format_version!r}'
+        )
+
+    if format_version in (2, '2', 'v2'):
+        return 2
+
+    if format_version in (1, '1', 'v1', 'legacy'):
+        return 1
+
+    raise ValueError(f'unsupported GCID format version: {format_version!r}')
+
+
+def _seq_to_v1_id(type_prefix: str, seq: int, location: bytes) -> str:
+    encryptor = _legacy_cipher.encryptor()
+    plaintext = _legacy_api_id_prefix(location) + seq.to_bytes(8, 'big')
+    encrypted = encryptor.update(plaintext)
+    combined = encrypted + _legacy_digest(encrypted)
+    encoded = base58.b58encode(combined)
+    return ''.join((type_prefix, '_', encoded.decode('utf-8')))
+
+
 def seq_to_id(
-    api_type: Any, seq: int | None, location: bytes | int | None = None
+    api_type: Any,
+    seq: int | None,
+    location: bytes | int | None = None,
+    *,
+    format_version: int | str = 2,
 ) -> str:
-    """Given a 64-bit integer, return an encrypted GCIDv2 string."""
+    """Given a 64-bit integer, return an encrypted GCID string.
+
+    GCIDv2 is emitted by default. Pass ``format_version=1`` only when a
+    legacy GCIDv1 string is required for compatibility with older clients.
+    """
     if seq is None:
         raise SequenceError(0, 'sequence is none')
 
@@ -187,6 +241,9 @@ def seq_to_id(
         if location is None
         else _location_bytes(location)
     )
+    if _format_version(format_version) == 1:
+        return _seq_to_v1_id(type_prefix, seq, id_location)
+
     plaintext = id_location + seq_bytes
     ciphertext = _aead.encrypt(_NONCE, plaintext, _aad(type_prefix, _HEADER))
 
@@ -204,29 +261,34 @@ def id_type(api_id: str) -> IdType:
     return id_rev_map[type_str]
 
 
-def _decode_id(
-    api_id: str, api_id_type: Any, location: bytes | int | None = None
+def _decode_v1_payload(
+    api_id: str, combined: bytes
 ) -> tuple[int, bytes, bytes]:
-    if not isinstance(api_id, str):
-        raise IdError(api_id, f'IDs must be of string type: {type(api_id)}')
+    encrypted = combined[: _LEGACY_PREFIX_BYTES + _SEQ_BYTES]
+    serial_hmac = combined[_LEGACY_PREFIX_BYTES + _SEQ_BYTES :]
+    if len(serial_hmac) != _LEGACY_TAG_BYTES:
+        raise IdError(api_id, 'legacy HMAC byte count mismatch')
 
-    parts = api_id.split('_')
-    if len(parts) != 2:
-        raise IdError(api_id, f'ID has invalid format: {api_id}')
+    if not hmac.compare_digest(serial_hmac, _legacy_digest(encrypted)):
+        raise IdError(api_id, 'invalid legacy HMAC')
 
-    type_str, encoded_id = parts
-    if _type_prefix(api_id_type) != type_str:
-        raise IdError(api_id, f'ID has invalid type: {type_str}')
+    decryptor = _legacy_cipher.decryptor()
+    decrypted_data = decryptor.update(encrypted)
+    prefix = decrypted_data[:_LEGACY_PREFIX_BYTES]
+    seq = decrypted_data[_LEGACY_PREFIX_BYTES:]
 
-    # Base58 decode the obfuscated serial number
-    try:
-        combined = base58.b58decode(encoded_id)
-    except ValueError as exc:
-        raise IdError(api_id, 'invalid base58 encoding') from exc
+    if prefix[0] != _LEGACY_GCID_VERSION:
+        raise IdError(api_id, f'ID has invalid legacy version: {prefix[0]}')
 
-    if len(combined) != _PAYLOAD_BYTES:
-        raise IdError(api_id, 'payload byte count mismatch')
+    if len(seq) != _SEQ_BYTES:
+        raise IdError(api_id, f'Invalid sequence bytes {len(seq)}')
 
+    return int.from_bytes(seq, 'big'), prefix, prefix[1:]
+
+
+def _decode_v2_payload(
+    api_id: str, type_str: str, combined: bytes
+) -> tuple[int, bytes, bytes]:
     header = combined[:_HEADER_BYTES]
     ciphertext = combined[_HEADER_BYTES:]
 
@@ -260,6 +322,38 @@ def _decode_id(
     if len(seq) != _SEQ_BYTES:
         raise IdError(api_id, f'Invalid sequence bytes {len(seq)}')
 
+    return int.from_bytes(seq, 'big'), _api_id_prefix(id_location), id_location
+
+
+def _decode_id(
+    api_id: str, api_id_type: Any, location: bytes | int | None = None
+) -> tuple[int, bytes, bytes]:
+    if not isinstance(api_id, str):
+        raise IdError(api_id, f'IDs must be of string type: {type(api_id)}')
+
+    parts = api_id.split('_')
+    if len(parts) != 2:
+        raise IdError(api_id, f'ID has invalid format: {api_id}')
+
+    type_str, encoded_id = parts
+    if _type_prefix(api_id_type) != type_str:
+        raise IdError(api_id, f'ID has invalid type: {type_str}')
+
+    # Base58 decode the obfuscated serial number
+    try:
+        combined = base58.b58decode(encoded_id)
+    except ValueError as exc:
+        raise IdError(api_id, 'invalid base58 encoding') from exc
+
+    if len(combined) == _LEGACY_PAYLOAD_BYTES:
+        seq, prefix, id_location = _decode_v1_payload(api_id, combined)
+    elif len(combined) == _PAYLOAD_BYTES:
+        seq, prefix, id_location = _decode_v2_payload(
+            api_id, type_str, combined
+        )
+    else:
+        raise IdError(api_id, 'payload byte count mismatch')
+
     expected_location = location
     type_location = _type_location(api_id_type)
     if expected_location is None and type_location != _LOCATION_PARTITION:
@@ -270,7 +364,7 @@ def _decode_id(
         if id_location != expected_location_bytes:
             raise IdError(api_id, f'ID has invalid location: {id_location}')
 
-    return int.from_bytes(seq, 'big'), _api_id_prefix(id_location), id_location
+    return seq, prefix, id_location
 
 
 def id_to_db_seq(
@@ -303,6 +397,7 @@ class Gcid(str):
     name: str = 'gcid'
     prefix: str = ''
     location: bytes | None = None
+    format_version: int = 2
     accept_seq_in_pydantic: bool = False
 
     def __new__(cls, value: str | int):
@@ -314,7 +409,7 @@ class Gcid(str):
 
         if isinstance(value, int):
             seq = value
-            value = seq_to_id(cls, seq)
+            value = seq_to_id(cls, seq, format_version=cls.format_version)
             id_location = _type_location(cls)
             obj = str.__new__(cls, value)
             obj._db_seq = DbSeq(
@@ -384,6 +479,7 @@ def typed_id(
     prefix: str,
     *,
     location: bytes | int | None = None,
+    format_version: int | str = 2,
     accept_seq_in_pydantic: bool = False,
 ) -> type[Gcid]:
     """Create a typed GCID class for one application ID kind."""
@@ -391,6 +487,7 @@ def typed_id(
         raise ValueError(f'id name must be a valid identifier: {name!r}')
 
     _validate_wire_prefix(prefix)
+    selected_format_version = _format_version(format_version)
 
     class_name = ''.join(part.capitalize() for part in name.split('_')) + 'Id'
     return type(
@@ -403,6 +500,7 @@ def typed_id(
             'location': _location_bytes(location)
             if location is not None
             else None,
+            'format_version': selected_format_version,
             'accept_seq_in_pydantic': accept_seq_in_pydantic,
         },
     )

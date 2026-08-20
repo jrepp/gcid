@@ -112,15 +112,7 @@ def _run_profile(callback) -> None:
 
 def benchmark() -> None:
     """Benchmark GCID conversion costs."""
-    import hashlib
-    import hmac
-
     import base58
-    from cryptography.hazmat.primitives.ciphers import (
-        Cipher,
-        algorithms,
-        modes,
-    )
     from pydantic import BaseModel
 
     from gcid import registry
@@ -132,44 +124,9 @@ def benchmark() -> None:
     profile_api_ids = [seq_to_id(IdType.PROFILE, seq) for seq in seqs]
     asset_api_ids = [seq_to_id(IdType.ASSET, seq) for seq in seqs]
     typed_profile_ids = [ids.profile.from_seq(seq) for seq in seqs]
-
-    legacy_key = b'X' * 32
-    legacy_hmac_key = b'test'
-    legacy_header = b'\01' + (b'\00' * 7)
-    legacy_cipher = Cipher(algorithms.AES(legacy_key), modes.CBC(b'\00' * 16))
-    legacy_hmac_base = hashlib.blake2b(
-        digest_size=16, key=legacy_hmac_key, person=b'id'
-    )
-
-    def legacy_digest(encrypted: bytes) -> bytes:
-        digest = legacy_hmac_base.copy()
-        digest.update(encrypted)
-        return digest.digest()[:4]
-
-    def legacy_seq_to_id(prefix: str, seq: int) -> str:
-        encryptor = legacy_cipher.encryptor()
-        encrypted = encryptor.update(legacy_header + seq.to_bytes(8, 'big'))
-        payload = base58.b58encode(encrypted + legacy_digest(encrypted))
-        return f'{prefix}_{payload.decode("ascii")}'
-
-    def legacy_id_to_seq(api_id: str, expected_prefix: str) -> int:
-        prefix, encoded_payload = api_id.split('_', 1)
-        if prefix != expected_prefix:
-            raise ValueError('invalid prefix')
-
-        decoded = base58.b58decode(encoded_payload)
-        encrypted = decoded[:16]
-        tag = decoded[16:]
-        if not hmac.compare_digest(tag, legacy_digest(encrypted)):
-            raise ValueError('invalid tag')
-
-        decryptor = legacy_cipher.decryptor()
-        plaintext = decryptor.update(encrypted)
-        if plaintext[0] != 1:
-            raise ValueError('invalid version')
-        return int.from_bytes(plaintext[8:], 'big')
-
-    legacy_profile_api_ids = [legacy_seq_to_id('prf', seq) for seq in seqs]
+    legacy_profile_api_ids = [
+        seq_to_id(IdType.PROFILE, seq, format_version=1) for seq in seqs
+    ]
     encoded_payloads = [
         api_id.split('_', maxsplit=1)[1].encode('utf-8')
         for api_id in profile_api_ids
@@ -196,12 +153,15 @@ def benchmark() -> None:
         ),
         (
             'v1 seq_to_id',
-            lambda: [legacy_seq_to_id('prf', seq) for seq in seqs],
+            lambda: [
+                seq_to_id(IdType.PROFILE, seq, format_version=1)
+                for seq in seqs
+            ],
         ),
         (
             'v1 id_to_seq',
             lambda: [
-                legacy_id_to_seq(api_id, 'prf')
+                id_to_seq(api_id, IdType.PROFILE)
                 for api_id in legacy_profile_api_ids
             ],
         ),

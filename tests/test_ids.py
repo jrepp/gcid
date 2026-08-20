@@ -54,6 +54,58 @@ def test_round_trip():
     assert seq == n
 
 
+def test_seq_to_id_emits_v2_by_default():
+    api_id = seq_to_id(IdType.PROFILE, 123)
+
+    assert api_id != 'prf_QBt6L5GZA4ob6M8wjQ5MWtgochh'
+    assert id_to_seq(api_id, IdType.PROFILE) == 123
+
+
+@pytest.mark.parametrize(
+    ('api_id', 'api_type', 'location', 'seq'),
+    [
+        ('prf_QBt6L5GZA4ob6M8wjQ5MWtgochh', IdType.PROFILE, 0, 123),
+        ('asset_GLCN4aqgfwoCQT4hcKShEcgFyXw', IdType.ASSET, 0, 456),
+        ('asset_43XfxRWqPm4Tu4iYuGbt6BawSD4h', IdType.ASSET, 42, 123),
+        ('prf_3bhsQnwJ3rth2JmqQgqoX16s2Lha', IdType.PROFILE, 0, 0),
+        (
+            'prf_3hgmT6DrBnf7S9PMW1WNhskHyBh7',
+            IdType.PROFILE,
+            0,
+            2**64 - 1,
+        ),
+    ],
+)
+def test_v1_ids_decode_for_migration(api_id, api_type, location, seq):
+    db_seq = id_to_db_seq(api_id, api_type, location=location)
+
+    assert db_seq.seq == seq
+    assert db_seq.location == location.to_bytes(7, 'big')
+    assert db_seq.prefix == b'\01' + location.to_bytes(7, 'big')
+
+
+def test_v1_generation_is_available_as_opt_in():
+    assert (
+        seq_to_id(IdType.PROFILE, 123, format_version=1)
+        == 'prf_QBt6L5GZA4ob6M8wjQ5MWtgochh'
+    )
+
+
+def test_typed_id_can_emit_v1_when_configured():
+    ProfileId = typed_id('profile', 'prf', format_version=1)
+
+    profile_id = ProfileId(123)
+
+    assert str(profile_id) == 'prf_QBt6L5GZA4ob6M8wjQ5MWtgochh'
+    assert ProfileId.to_seq(profile_id) == 123
+
+
+@pytest.mark.parametrize('format_version', [0, 3, 'v3', True])
+def test_unsupported_format_version_is_rejected(format_version):
+    with pytest.raises(ValueError):
+        seq_to_id(IdType.PROFILE, 123, format_version=format_version)
+
+
 def test_invalid_type():
     _, api_id = profile_id()
     api_id = api_id.replace('prf', 'foo')

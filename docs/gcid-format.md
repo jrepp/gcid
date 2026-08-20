@@ -297,6 +297,25 @@ The following vectors use the Python reference development key:
 | `prf` | 0 | 18446744073709551615 | `0a4401ea838160882402e258cc8de4` | `3f8c3ad5f654505d698dde38a96175e5` | `prf_Cbdrze8v48sf8q2jPwrCf3TMB4Gs3YiHcnki91GDYsBwmxp` |
 
 
+## Python Reference Compatibility
+
+The Python reference package emits GCIDv2 strings by default for the
+existing `seq_to_id`, typed ID, and registry APIs.  The same decoding
+APIs also accept GCIDv1 strings to support migrations from package
+version 0.1.x.
+
+Callers that need to produce GCIDv1 strings during a migration window
+MAY pass `format_version=1` to `seq_to_id` or `typed_id`.  New
+deployments SHOULD emit GCIDv2 and SHOULD treat GCIDv1 emission as a
+temporary compatibility mode.
+
+GCIDv1 compatibility preserves the older CBC plus 32-bit keyed BLAKE2b
+tag construction, including its limitation that the visible prefix is
+checked by the decoder but is not cryptographically bound into the
+payload.  Services SHOULD avoid accepting relabeled GCIDv1 payloads in
+generic decode paths.
+
+
 ## Security Considerations
 
 GCIDv2 confidentiality and integrity depend on the secrecy of the
