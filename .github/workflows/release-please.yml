@@ -20,7 +20,6 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          default-branch: main
 
       - name: Checkout Python release
         if: ${{ steps.release.outputs.release_created }}
