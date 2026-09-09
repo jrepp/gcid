@@ -4,7 +4,7 @@
 
   <groupId>com.github.jrepp</groupId>
   <artifactId>gcid</artifactId>
-  <version>1.0.0</version>
+  <version>1.0.1-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>gcid</name>
   <description>Dependency-free Java implementation of the GCIDv2 wire format.</description>
