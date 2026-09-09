@@ -3,3 +3,5 @@
 .ruff_cache/
 htmlcov/
 __pycache__/
+rust/gcid/target/
+java/gcid/target/

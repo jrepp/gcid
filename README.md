@@ -226,6 +226,8 @@ This repository hosts several independently versioned language packages:
 | --- | --- | --- | --- |
 | Python `gcid` | repo root | `python/vX.Y.Z` | PyPI (`pip install gcid`) |
 | Go `gcid` | `go/gcid` | `go/gcid/vX.Y.Z` | Go module proxy (`go get github.com/jrepp/gcid/go/gcid@vX.Y.Z`) |
+| Rust `gcid` crate | `rust/gcid` | `rust/gcid/vX.Y.Z` | crates.io |
+| Java `gcid` library | `java/gcid` | `java/gcid/vX.Y.Z` | Maven Central |
 
 [Release Please](https://github.com/googleapis/release-please) reads
 [conventional commits](https://www.conventionalcommits.org/) on `main` and
@@ -237,4 +239,6 @@ own cadence.
 
 When a `python/*` release is cut, the release workflow builds the package and
 publishes it to PyPI. Go packages need no upload: a `go/gcid/vX.Y.Z` tag is
-resolved directly by the Go module proxy.
+resolved directly by the Go module proxy. crates.io and Maven Central uploads
+for the Rust and Java packages are wired the same way once their registry
+publishing is configured.
