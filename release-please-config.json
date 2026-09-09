@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "e367a38d60705db839dd9800ec2e439b2a5d3cf7",
+  "tag-separator": "/",
+  "separate-pull-requests": false,
+  "packages": {
+    ".": {
+      "release-type": "python",
+      "package-name": "gcid",
+      "component": "python",
+      "exclude-paths": ["go/gcid"]
+    },
+    "go/gcid": {
+      "release-type": "go",
+      "component": "go/gcid",
+      "initial-version": "0.1.0"
+    }
+  }
+}
