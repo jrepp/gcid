@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/jrepp/gcid/compare/python/v0.2.0...python/v0.3.0) (2026-09-09)
+
+
+### Features
+
+* add gcid rust crate and java maven package ([40e9384](https://github.com/jrepp/gcid/commit/40e93849762bfe15ea2301609a868326e8d4a1de))
+
 ## [0.2.0](https://github.com/jrepp/gcid/compare/python/v0.1.5...python/v0.2.0) (2026-09-09)
 
 
