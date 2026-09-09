@@ -237,6 +237,14 @@ package. Commit messages that only affect one package should be scoped
 accordingly (for example `feat(go): ...`) so each package is versioned on its
 own cadence.
 
+The Python package lives at the repository root, so a merged PR counts toward
+Python if its merge commit carries a user-facing title (`feat:`/`fix:`) and
+touches any root-level file. To avoid spurious Python bumps, PRs that change
+repo-root infrastructure (workflows, release config, this README) or that add
+other language packages should use a non-user-facing title (for example
+`chore: ...`), while keeping the release-relevant conventional commit scoped
+inside the branch (for example `feat(go): ...`).
+
 When a `python/*` release is cut, the release workflow builds the package and
 publishes it to PyPI. Go packages need no upload: a `go/gcid/vX.Y.Z` tag is
 resolved directly by the Go module proxy. crates.io and Maven Central uploads
