@@ -220,3 +220,26 @@ asset.model_dump()
 Pydantic validation accepts GCID strings by default. Direct construction accepts
 integers for internal use, e.g. `ids.asset(123)`, but pydantic fields reject raw
 sequence numbers unless the type is created with `accept_seq_in_pydantic=True`.
+
+
+Releases
+=====
+
+This repository hosts several independently versioned language packages:
+
+| Package | Path | Release tag prefix | Consumed via |
+| --- | --- | --- | --- |
+| Python `gcid` | repo root | `python/vX.Y.Z` | PyPI (`pip install gcid`) |
+| Go `gcid` | `go/gcid` | `go/gcid/vX.Y.Z` | Go module proxy (`go get github.com/jrepp/gcid/go/gcid@vX.Y.Z`) |
+
+[Release Please](https://github.com/googleapis/release-please) reads
+[conventional commits](https://www.conventionalcommits.org/) on `main` and
+opens a release pull request that bumps versions, updates changelogs, and,
+once merged, creates a prefixed tag and GitHub release for each changed
+package. Commit messages that only affect one package should be scoped
+accordingly (for example `feat(go): ...`) so each package is versioned on its
+own cadence.
+
+When a `python/*` release is cut, the release workflow builds the package and
+publishes it to PyPI. Go packages need no upload: a `go/gcid/vX.Y.Z` tag is
+resolved directly by the Go module proxy.
