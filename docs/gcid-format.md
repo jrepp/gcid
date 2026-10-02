@@ -1,8 +1,7 @@
 # Global Cryptographic Identifier (GCID) Format Version 2
 
-Internet-Draft                                                J. Repp
-Intended status: Informational                              GCID Project
-Expires: TBD                                                  June 2026
+GCID Specification                                            J. Repp
+Status: Draft, in progress                                  GCID Project
 
 
 ## Abstract
@@ -21,16 +20,15 @@ typed for application routing, reversible by trusted services, compact
 enough for API use, and cryptographically protected against tampering.
 
 
-## Status of This Memo
+## Status of This Document
 
-This Internet-Draft is submitted in full conformance with the provisions
-of BCP 78 and BCP 79.
+This specification is a work in progress.  The wire format defined here
+is implemented by the SDKs in this repository, but normative text,
+conformance requirements, and security guidance are still being revised
+and may change.  Open work is tracked in [ROADMAP.md](ROADMAP.md).
 
-Internet-Drafts are working documents of the Internet Engineering Task
-Force (IETF).  Internet-Drafts are draft documents valid for a maximum
-of six months and may be updated, replaced, or obsoleted by other
-documents at any time.  It is inappropriate to use Internet-Drafts as
-reference material or to cite them other than as "work in progress."
+Sections marked **Draft** describe behavior that is specified but not yet
+implemented consistently across all SDKs.
 
 
 ## Terminology
@@ -86,6 +84,33 @@ GCIDv2 does not try to be a general content identifier, bearer token,
 authorization credential, or non-reversible random identifier.
 
 
+## Trust Model and Applicability
+
+Encoding and decoding both require the same symmetric key.  Any party
+able to decode a GCID is therefore also able to forge one.  GCIDv2 is
+designed for a **single trust domain**: one organization, or a set of
+services that already share secrets.
+
+GCIDv2 is a good fit when:
+
+* An internal integer primary key must be exposed as an opaque, typed,
+  tamper-evident public identifier without a lookup table.
+* Trusted services must resolve an identifier to its row and partition
+  without a network round trip.
+
+GCIDv2 is not a good fit when:
+
+* Identifiers must be resolved by parties that are not trusted to mint
+  them.  Cross-organization federation requires asymmetric or per-party
+  key separation, which this version does not define.
+* Identifiers must survive key rotation unchanged (see Key Rotation and
+  Canonical Form).
+* Unlinkability between repeated encodings of the same row is required.
+* The shortest possible identifier is the primary requirement.
+  Identifiers are 35 octets before Base58 encoding, about 48
+  characters.
+
+
 ## String Format
 
 A GCIDv2 string has two visible components:
@@ -99,10 +124,11 @@ authenticated as associated data, so changing the visible prefix
 invalidates the payload.
 
 GCID strings are ASCII strings.  The prefix component MUST contain at
-least one character and MUST NOT contain `_` (U+005F).  Applications MAY
-apply additional prefix restrictions.  For broad language and URL
-interoperability, applications SHOULD restrict prefixes to lowercase
-ASCII letters, digits, and hyphen.
+least one character and MUST NOT contain `_` (U+005F).  Encoders
+**Draft:** MUST restrict prefixes to lowercase ASCII letters and digits,
+so that GCID strings are safe in URLs, file names, and
+case-insensitive contexts.  Decoders MUST apply the same restriction to
+the expected prefix.
 
 The encoded payload MUST use the Bitcoin Base58 alphabet:
 
@@ -147,6 +173,11 @@ Implementations MUST reject unsupported version, suite, schema, or key
 identifier values before decryption.  Implementations SHOULD use the Key
 ID to select a configured key.  The Python reference implementation
 emits and accepts Key ID `0x00`.
+
+Key ID is a lookup hint only.  Because Key ID is cleartext and a single
+octet, it identifies at most 256 keys.  Per-tenant or per-location key
+separation, if needed, is a deployment choice that maps those scopes to
+distinct Key IDs; this version defines no key derivation scheme.
 
 
 ## `seq64-loc56` Payload Profile
@@ -197,6 +228,12 @@ Systems that require unlinkability between repeated encodings of the
 same database row SHOULD use a different payload profile that includes
 randomness or SHOULD use a non-reversible identifier format.
 
+Because every encoding under a key uses the same nonce, the number of
+distinct identifiers a single key may safely encode is bounded by the
+nonce-reuse analysis of [RFC8452].  **Draft:** a future revision will
+state an explicit per-key volume bound.  Until then, deployments SHOULD
+rotate keys on a documented schedule.
+
 
 ## GCID Generation
 
@@ -233,12 +270,32 @@ the following steps:
 9. Decrypt and authenticate the ciphertext.  Authentication failure MUST
    reject the GCID.
 10. Parse the payload profile plaintext.
-11. If an expected location partition is configured, verify that the
-    decoded location partition matches it.
+11. Verify the decoded location partition against the caller's expected
+    location partition.  Decoder interfaces MUST require the caller to
+    supply either an expected location partition or an explicit
+    indication that any location is acceptable.  A decoder MUST NOT
+    silently skip this check.
 12. Return the decoded sequence and location partition.
 
 Implementations MUST NOT return partial decoded data from malformed or
 unauthenticated input.
+
+
+## Conformance
+
+**Draft.**  An implementation claims GCIDv2 conformance only if it
+passes the shared conformance vectors maintained with this
+specification.  The vectors MUST include:
+
+* Positive vectors covering multiple keys, non-zero Key IDs, the
+  maximum 56-bit location, and the minimum and maximum sequence.
+* Negative vectors: tampered prefix, tampered header, tampered
+  ciphertext or tag, wrong payload length, invalid Base58, unsupported
+  version, suite, schema and Key ID, and mismatched expected location.
+
+Implementations that provide their own AES-GCM-SIV MUST additionally pass
+the known-answer tests in [RFC8452].  Implementations SHOULD prefer an
+audited AES-GCM-SIV library where one exists for the platform.
 
 
 ## ABNF
@@ -249,8 +306,8 @@ after Base58 decoding.
 
 ```abnf
 gcid           = prefix "_" base58-payload
-prefix         = 1*(%x21-5E / %x60-7E)
-                 ; visible ASCII except "_"
+prefix         = 1*(%x61-7A / %x30-39)
+                 ; lowercase letters and digits
 base58-payload = 1*base58-char
 base58-char    = %x31-39 / %x41-48 / %x4A-4E / %x50-5A /
                  %x61-6B / %x6D-7A
@@ -309,6 +366,10 @@ MAY pass `format_version=1` to `seq_to_id` or `typed_id`.  New
 deployments SHOULD emit GCIDv2 and SHOULD treat GCIDv1 emission as a
 temporary compatibility mode.
 
+**Draft:** decoders MUST reject GCIDv1 strings unless the caller
+explicitly enables legacy acceptance.  GCIDv1 carries only a 32-bit tag,
+so legacy acceptance MUST be treated as a time-limited migration aid.
+
 GCIDv1 compatibility preserves the older CBC plus 32-bit keyed BLAKE2b
 tag construction, including its limitation that the visible prefix is
 checked by the decoder but is not cryptographically bound into the
@@ -319,8 +380,10 @@ generic decode paths.
 ## Security Considerations
 
 GCIDv2 confidentiality and integrity depend on the secrecy of the
-selected AES-GCM-SIV key.  Deployments MUST NOT use the default
-development key in production.
+selected AES-GCM-SIV key.  The key listed in Test Vectors is public.
+**Draft:** implementations MUST NOT fall back to a built-in key when none
+is configured; they MUST fail to initialize unless the caller explicitly
+selects a development or test mode.
 
 The visible prefix is authenticated as associated data.  Relabeling a
 payload from one prefix to another MUST fail authentication.
@@ -332,11 +395,29 @@ when the same prefix and payload have been emitted more than once.
 Location partitions often encode tenant, region, or shard boundaries.
 Multi-tenant services MUST verify the expected location partition from
 trusted request or routing context before using the decoded sequence.
+Decoder interfaces are required (see GCID Validation and Decoding) to
+make that check explicit so that skipping it is a visible decision.
 
 Key ID is cleartext and is intended for key lookup only.  It is not an
 authorization signal.  Implementations SHOULD support key rotation by
 accepting multiple configured keys for decoding and emitting only the
 current key for new IDs.
+
+### Key Rotation and Canonical Form
+
+GCIDv2 strings are deterministic per key.  After the emitting key
+changes, the same row encodes to a different string.  A GCID string is
+therefore not a stable primary identity across rotations.  Services
+that persist, index, cache, or compare GCID strings MUST either:
+
+* store and compare the decoded `(location, sequence)` pair, treating
+  the string as an encoding of it; or
+* decode and re-encode with the current key before comparing strings.
+
+Decoders MUST continue to accept identifiers from retired keys for as
+long as those identifiers remain in circulation.  A deployment that
+cannot accept identifiers changing on rotation SHOULD NOT rotate keys
+and SHOULD NOT use GCIDv2 for that identifier class.
 
 GCIDv2 strings are stable identifiers, not bearer credentials.  Services
 MUST perform authorization independently of GCID validation.
@@ -349,7 +430,8 @@ nonce-misuse-resistant direction from AES-SIV [RFC5297] and
 AES-GCM-SIV [RFC8452], and the self-describing identifier lesson from
 content identifiers such as CIDs and multibase.  UUIDs [RFC9562] remain
 the better default when reversibility and hidden database metadata are
-not required.  Sqids and Hashids-style formats are useful for cosmetic
+not required, and random identifiers with a lookup table remain the
+better default across trust boundaries.  Sqids and Hashids-style formats are useful for cosmetic
 obfuscation, but they are not cryptographic integrity or confidentiality
 mechanisms.
 
@@ -364,35 +446,35 @@ This document has no IANA actions.
 ### Normative References
 
 [RFC2119] Bradner, S., "Key words for use in RFCs to Indicate
-Requirement Levels", BCP 14, RFC 2119, DOI 10.17487/RFC2119, March
-1997, <https://www.rfc-editor.org/info/rfc2119>.
+Requirement Levels", BCP 14, RFC 2119, DOI 10.17487/RFC2119,
+<https://www.rfc-editor.org/info/rfc2119>.
 
 [RFC5116] McGrew, D., "An Interface and Algorithms for Authenticated
-Encryption", RFC 5116, DOI 10.17487/RFC5116, January 2008,
+Encryption", RFC 5116, DOI 10.17487/RFC5116,
 <https://www.rfc-editor.org/info/rfc5116>.
 
 [RFC5234] Crocker, D., Ed. and P. Overell, "Augmented BNF for Syntax
-Specifications: ABNF", STD 68, RFC 5234, DOI 10.17487/RFC5234, January
-2008, <https://www.rfc-editor.org/info/rfc5234>.
+Specifications: ABNF", STD 68, RFC 5234, DOI 10.17487/RFC5234,
+<https://www.rfc-editor.org/info/rfc5234>.
 
 [RFC8174] Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC 2119
-Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174, May 2017,
+Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
 <https://www.rfc-editor.org/info/rfc8174>.
 
 [RFC8452] Gueron, S., Langley, A., and Y. Lindell, "AES-GCM-SIV:
 Nonce Misuse-Resistant Authenticated Encryption", RFC 8452,
-DOI 10.17487/RFC8452, April 2019,
+DOI 10.17487/RFC8452,
 <https://www.rfc-editor.org/info/rfc8452>.
 
 ### Informative References
 
 [RFC5297] Harkins, D., "Synthetic Initialization Vector (SIV)
 Authenticated Encryption Using the Advanced Encryption Standard (AES)",
-RFC 5297, DOI 10.17487/RFC5297, October 2008,
+RFC 5297, DOI 10.17487/RFC5297,
 <https://www.rfc-editor.org/info/rfc5297>.
 
 [RFC9562] Davis, K., Peabody, B., and P. Leach, "Universally Unique
-IDentifiers (UUIDs)", RFC 9562, DOI 10.17487/RFC9562, May 2024,
+IDentifiers (UUIDs)", RFC 9562, DOI 10.17487/RFC9562,
 <https://www.rfc-editor.org/info/rfc9562>.
 
 [CID] Multiformats, "Content Identifiers",
