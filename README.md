@@ -4,6 +4,10 @@ GCID
 Global, Cryptographic, Identifiers
 ====
 
+> **Status: in progress.** The specification and SDKs are being hardened
+> before wider adoption. See [docs/ROADMAP.md](docs/ROADMAP.md) for open
+> work and [docs/gcid-format.md](docs/gcid-format.md) for the format.
+
 Quick examples
 =====
 
