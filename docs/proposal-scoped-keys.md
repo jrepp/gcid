@@ -99,13 +99,104 @@ forced.
 
 ### Costs and limits
 
-- Tenant cannot be read from an ID alone. Gateways must route on
-  authenticated context or a hint outside the ID.
+- Suite `0x02` cannot be routed from an ID alone. Gateways must route on
+  authenticated context, or use the routing suite below.
 - A resource shared between tenants is minted under its owner's scope.
   The other tenant cannot decode it and must resolve it through the owner.
 - A deployment needs a key service that hands out `K_s` and holds `K_g`.
   This is operational work that suite `0x01` did not need.
 - Compromise recovery still changes strings for the affected scope.
+
+## Extension: gateway routing (suite 0x03)
+
+A gateway that receives an ID with no other context needs to find the
+owning tenant or backend. Suite `0x03` adds a masked route field and a
+second key derived from the same generation key, so the ID becomes a
+**composite**: a routing key that gateways hold, and a scope key that
+only backends hold.
+
+```text
+K_r = HKDF-SHA256(ikm = K_g, salt = empty,
+                  info = "GCIDv2/route" || 0x00 || key_id, L = 32)
+```
+
+`K_s` is derived as before, and HKDF's one-way property keeps `K_r` and
+`K_s` independent: holding `K_r` reveals nothing about `K_s` or `K_g`.
+
+### Wire layout
+
+```text
++-----------+-----------+------------------+-----------+
+| Header 4  | Route 4   | Ciphertext 15    | Tag 16    |
++-----------+-----------+------------------+-----------+
+```
+
+The payload is 39 octets, 4 more than suite `0x02`, about 54 Base58
+characters. Header, plaintext, inner AEAD and associated data are exactly
+as in suite `0x02`, with `K_s`. Only the Route field is new.
+
+```text
+route = rid XOR HMAC-SHA256(K_r, "GCIDv2/route" || 0x00 || prefix ||
+                            0x00 || header || tag)[0..4]
+```
+
+`rid` is a 32-bit **route identifier** chosen by the deployment. The
+tag already depends on the plaintext, so it acts as a synthetic IV for
+the mask. The Route field therefore differs for every ID even when `rid`
+is the same, so observers cannot group IDs by route.
+
+### Gateway
+
+1. Base58-decode, read the header, and select `K_r` by Key ID.
+2. Recompute the mask from the visible prefix, header and tag, and XOR it
+   with the Route field to recover `rid`.
+3. Look up `rid` in the routing table and forward.
+
+The gateway never holds `K_s` or `K_g`. It cannot decode the location or
+sequence, and it cannot mint an ID that a backend will accept. It
+routes; it does not authenticate.
+
+### Backend
+
+The backend decodes with `K_s` exactly as in suite `0x02`, and also holds
+`K_r` for the generations it serves. Before trusting the ID it MUST
+recompute the Route field from its own `rid` set and reject a mismatch.
+This keeps one canonical string per row; without it, the 32 route bits
+would be malleable.
+
+### Properties
+
+- **Misrouting is harmless.** A forged or altered Route field leads to a
+  backend that rejects it. Choose `rid` values from a sparse random
+  space so that a random Route field rarely matches a real target and
+  the gateway can drop most junk early.
+- **No new leak to outsiders.** An outside observer sees no tenant,
+  region or route, only the same random-looking payload as before.
+- **Gateway sees routing only.** It learns `rid` and which IDs share a
+  `rid`, which is its job, and nothing about location or sequence.
+- **Tenant verification is unchanged.** The scope key still gates
+  decoding, so `rid` is a routing hint and never an authorization.
+
+### Keeping IDs stable
+
+`rid` is baked into the string, so it must name a **logical** target such
+as a tenant or cell, never a physical address. The routing table maps
+`rid` to the current endpoint, so moving a tenant between backends edits
+the table and no ID changes. Splitting or merging logical targets changes
+`rid` and therefore IDs, and is treated like a re-mint.
+
+`rid` and scope are independent. When many tenants share a backend, `rid`
+names the backend and the scope names the tenant, which the backend
+takes from authenticated context.
+
+### Costs
+
+- 4 more octets per ID.
+- Gateways and backends need `K_r`, so key distribution has three
+  tiers: `K_g` in the key service only, `K_r` to gateways and backends,
+  `K_s` to the owning backends.
+- A compromised `K_r` exposes routing only and lets an attacker steer
+  traffic, but not decode or forge IDs.
 
 ## Open questions
 
@@ -115,6 +206,10 @@ forced.
    column, with watermarks documented as an optimization.
 3. Alias window mechanics: who publishes retirements, and for how long.
 4. Should suite `0x02` become the recommended default once shipped?
+5. Route field width: 32 bits as proposed, or 16 for shorter IDs at the
+   cost of a denser `rid` space and more junk reaching backends?
+6. Should `K_r` be per generation as proposed, or per region so that a
+   regional gateway cannot route another region's IDs?
 
 ## Delivery
 
@@ -125,4 +220,6 @@ Each step is its own pull request.
 2. Shared vectors for suite `0x02`, including wrong-scope and
    wrong-generation negatives (extends F1).
 3. Python reference implementation with a scope-aware keyring.
-4. Rust, Go and Java after the vectors land.
+4. Suite `0x03` routing: spec, vectors, Python gateway and backend
+   reference (S5).
+5. Rust, Go and Java after the vectors land.

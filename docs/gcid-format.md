@@ -107,7 +107,7 @@ GCIDv2 is not a good fit when:
   Canonical Form).
 * Unlinkability between repeated encodings of the same row is required.
 * The shortest possible identifier is the primary requirement.
-  Identifiers are 35 octets before Base58 encoding, about 52
+  Identifiers are 35 octets before Base58 encoding, about 48
   characters.
 
 

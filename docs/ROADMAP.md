@@ -39,6 +39,7 @@ Depends on F1. Design is in [proposal-scoped-keys.md](proposal-scoped-keys.md).
 | S2 | Scoped shared vectors | Positive plus wrong-scope and wrong-generation negatives | todo |
 | S3 | Python reference | Scope-aware keyring and mandatory scope on decode | todo |
 | S4 | Other SDKs | Rust, Go, Java after S2 | todo |
+| S5 | Gateway routing | Suite 0x03: masked route field, routing key, gateway and backend verification, vectors | todo |
 
 ## Design questions
 
