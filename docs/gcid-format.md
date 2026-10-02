@@ -125,8 +125,8 @@ invalidates the payload.
 
 GCID strings are ASCII strings.  The prefix component MUST contain at
 least one character and MUST NOT contain `_` (U+005F).  Encoders
-**Draft:** MUST restrict prefixes to lowercase ASCII letters, digits, and
-hyphen, so that GCID strings are safe in URLs, file names, and
+**Draft:** MUST restrict prefixes to lowercase ASCII letters and digits,
+so that GCID strings are safe in URLs, file names, and
 case-insensitive contexts.  Decoders MUST apply the same restriction to
 the expected prefix.
 
@@ -306,8 +306,8 @@ after Base58 decoding.
 
 ```abnf
 gcid           = prefix "_" base58-payload
-prefix         = 1*(%x61-7A / %x30-39 / "-")
-                 ; lowercase letters, digits, hyphen
+prefix         = 1*(%x61-7A / %x30-39)
+                 ; lowercase letters and digits
 base58-payload = 1*base58-char
 base58-char    = %x31-39 / %x41-48 / %x4A-4E / %x50-5A /
                  %x61-6B / %x6D-7A

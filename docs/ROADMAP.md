@@ -25,9 +25,20 @@ Status values: `todo`, `in progress`, `done`.
 | ID | Item | Scope | Status |
 | --- | --- | --- | --- |
 | H1 | Opt-in GCIDv1 acceptance | Python decoders reject v1 unless legacy acceptance is enabled | todo |
-| H2 | Prefix restriction | Enforce lowercase letters, digits, and hyphen in encoders and decoders across all SDKs | todo |
+| H2 | Prefix restriction | Enforce lowercase letters and digits in encoders and decoders across all SDKs | todo |
 | H3 | Canonical-form helpers | SDK helper to compare identifiers by decoded `(location, sequence)`, and guidance in SDK READMEs | todo |
 | H4 | Per-key volume bound | Derive and document the safe encoding volume per key from the RFC 8452 analysis; state it in the spec | todo |
+
+## Scoped keys
+
+Depends on F1. Design is in [proposal-scoped-keys.md](proposal-scoped-keys.md).
+
+| ID | Item | Scope | Status |
+| --- | --- | --- | --- |
+| S1 | Spec for suite 0x02 | Scope-derived keys, rotation rules, vectors | todo |
+| S2 | Scoped shared vectors | Positive plus wrong-scope and wrong-generation negatives | todo |
+| S3 | Python reference | Scope-aware keyring and mandatory scope on decode | todo |
+| S4 | Other SDKs | Rust, Go, Java after S2 | todo |
 
 ## Design questions
 
@@ -36,7 +47,7 @@ These need a decision before any spec change.
 | ID | Question | Status |
 | --- | --- | --- |
 | D1 | Compact suite with a truncated tag (shorter identifiers) at an explicitly stated security level: worth defining? | todo |
-| D2 | Per-location or per-tenant key derivation mapped onto Key ID, for deployments that need key separation inside one trust domain | todo |
+| D2 | Per-tenant key derivation and stable IDs across rotation: see [proposal-scoped-keys.md](proposal-scoped-keys.md) | in progress |
 | D3 | Shared prefix registry versus application-local prefixes | todo |
 
 ## After the foundation
